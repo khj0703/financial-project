@@ -1,0 +1,101 @@
+
+# 사용자정의함수
+import numpy as np
+import pandas as pd
+from numpy import array
+from pandas import Series, DataFrame
+from numpy import nan as NA
+
+# 환경설정
+pd.set_option('display.max_column', 30)
+
+# 분석 모듈 및 함수
+from imblearn.over_sampling import SMOTE
+from sklearn.preprocessing import LabelEncoder     # 숫자로 바꿔주는 역할
+from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.metrics import log_loss
+import numpy as np
+import pandas as pd
+
+
+# 데이터 로딩
+train = pd.read_csv('train.csv')
+
+# 무의미한 컬럼 삭제
+train.drop(['FLAG_MOBIL', 'work_phone','phone','email'], axis=1, inplace=True)
+
+# 양수인 데이터는 무직자로 판단, 0 처리
+train['DAYS_EMPLOYED'] = train['DAYS_EMPLOYED'].map(lambda x: 0 if x > 0 else x)
+
+# 음수값 -> 양수 변환
+feats = ['DAYS_BIRTH', 'begin_month', 'DAYS_EMPLOYED']
+train[feats] = np.abs(train[feats])
+
+# 무직자와 연금수령자 중 무직자에 대해 'Unemployed' 지정
+train.loc[(train['DAYS_EMPLOYED'] == 0) & (train['income_type'] == 'Pensioner'), 'occyp_type'] = 'Unemployed'
+train.loc[train['DAYS_EMPLOYED'] == 0, 'occyp_type'] = 'Unemployed'
+
+# nan 값 처리 (drop)
+train.dropna(axis=0, inplace=True)
+
+# 파생변수 추가
+train['house_income_type'] = train['house_type'] + '_' + train['income_type']
+train['income_mean'] = train['income_total'] / train['family_size']
+train['ability'] = train['income_total'] / (train['DAYS_BIRTH'] + train['DAYS_EMPLOYED'])
+
+# index drop
+train.drop('index', axis=1, inplace=True)
+
+# LabelEncoder를 사용하여 범주형 열을 숫자로 변환
+label_encoder = LabelEncoder()
+categorical_columns = train.select_dtypes(include=['object']).columns
+
+for col in categorical_columns:
+    train[col] = label_encoder.fit_transform(train[col])
+
+# 전처리가 완료된 데이터를 사용하여 train 데이터와 test 데이터 분리
+X_train, X_test, y_train, y_test = train_test_split(train.drop('credit', axis=1), train['credit'], test_size=0.2, random_state=0)
+
+# GradientBoosting Tree 모델 생성
+m_gb = GradientBoostingClassifier()
+
+# 튜닝할 매개변수 설정
+param_grid = {
+    'n_estimators': [50, 100, 150],
+    'max_depth': [3, 4, 5]
+}
+
+# GridSearchCV를 사용하여 튜닝 수행
+grid_search_gb = GridSearchCV(estimator=m_gb, param_grid=param_grid, cv=5)
+grid_search_gb.fit(X_train, y_train)
+
+# 최적의 매개변수 출력
+best_params_gb = grid_search_gb.best_params_
+print("Best Parameters for Gradient Boosting:", best_params_gb)
+
+# 최적 매개변수로 모델 생성 및 훈련
+best_gb_model = GradientBoostingClassifier(**best_params_gb)
+best_gb_model.fit(X_train, y_train)
+
+# 교차 검증 수행
+cv_score_gb = cross_val_score(best_gb_model, X_train, y_train, cv=5)
+cv_score_gb_mean = cv_score_gb.mean()
+print("Cross-Validation Score for Gradient Boosting:", cv_score_gb_mean)
+
+# 테스트 데이터로 모델 평가
+accuracy_gb = best_gb_model.score(X_test, y_test)
+print("Accuracy on Test Data for Gradient Boosting:", accuracy_gb)
+
+# 예측 확률 계산
+predicted_probs = best_gb_model.predict_proba(X_test)
+
+# 로그 손실 계산
+loss = log_loss(y_test, predicted_probs)
+print(f'Log Loss: {loss}')
+
+
+#전처리가 완료된 데이터를 사용하여 train 데이터와 test 데이터 분리 후  클래스 불균형을 해소 하였으나 
+#점수가 떨어져 불균형 해소를 하지 않았음. 외부 데이터 유입으로 클래스불균형 해소를 하려고하였으나
+#현실적으로 데이터 수집의 어려움을 겪음 
+
